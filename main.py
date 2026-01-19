@@ -122,7 +122,7 @@ async def list_members(ctx: commands.Context):
     description="Only Exco can use this",
     guild=discord.Object(id=TEST_GUILD_ID),
 )
-@app_commands.checks.has_role("Exco")
+@app_commands.checks.has_role("EXCO")
 async def hi_slash(interaction: discord.Interaction):
     guild = interaction.guild
     members = guild.members
