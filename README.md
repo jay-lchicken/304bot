@@ -17,11 +17,13 @@ A Discord bot built with discord.py.
 
 ### Environment Variables
 
-Create a `.env` file in the root directory:
+Create a `.env` file in the root directory (this file should NOT be committed to git or included in the Docker image):
 
 ```
 TOKEN=your_discord_bot_token_here
 ```
+
+**Note**: The `.env` file is excluded from the Docker image via `.dockerignore` for security. You'll pass environment variables at runtime using `-e` or `--env-file` flags.
 
 ### Running Locally
 
