@@ -1,4 +1,3 @@
-from tkinter.font import names
 
 import discord
 import os
