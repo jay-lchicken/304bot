@@ -2,10 +2,7 @@ from tkinter.font import names
 
 import discord
 import os
-import traceback
 from discord import app_commands
-from discord import Interaction
-from discord._types import ClientT
 from discord.ext import commands
 from dotenv import load_dotenv
 load_dotenv()
