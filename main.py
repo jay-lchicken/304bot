@@ -1,12 +1,16 @@
-
 import discord
 import os
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
+from db import fetch_connection_rows, fetch_distinct_usernames_between
+from views import ModalButtonView
 load_dotenv()
 TOKEN = os.getenv('TOKEN')
 TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
+DATABASE_URL = os.getenv("DATABASE_URL")
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -14,71 +18,12 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-class ModalButtonView(discord.ui.View):
-    def __init__(self, names: list[str]):
-        super().__init__(timeout=180)
-        self.names = names
-        self.selected_name: str | None = None
-
-        options = [
-            discord.SelectOption(label=name, value=name)
-            for name in names
-        ]
-
-        self.name_select = discord.ui.Select(
-            placeholder="Choose who you met",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-        self.name_select.callback = self.on_select  # bind callback
-        self.add_item(self.name_select)
-        self.submit_button = discord.ui.Button(
-            label="Submit",
-            style=discord.ButtonStyle.green,
-        )
-        self.submit_button.callback = self.button_clicked
-        self.add_item(self.submit_button)
-
-    async def on_select(self, interaction: discord.Interaction):
-        self.selected_name = self.name_select.values[0]
-        await interaction.response.defer()
-    async def button_clicked(self, interaction: discord.Interaction):
-        if self.selected_name is None:
-            await interaction.response.send_message(
-                "Please select a name from the dropdown first.",
-                ephemeral=True,
-            )
-            return
-        await interaction.response.send_modal(
-            WhoDidYouMeetModal(self.selected_name)
-        )
-        self.submit_button.disabled = True
-        self.name_select.disabled = True
-        await interaction.edit_original_response(view=self)
-
-
-class WhoDidYouMeetModal(discord.ui.Modal, title="Who Did You Meet?"):
-    def __init__(self, selected_name: str):
-        super().__init__(timeout=300)
-        self.selected_name = selected_name
-
-        self.details = discord.ui.TextInput(
-            label=f"Anything about {self.selected_name}?",
-            required=False,
-        )
-        self.add_item(self.details)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            f"You met: {self.selected_name}",
-            ephemeral=True,
-        )
-
 
 @bot.event
 async def on_ready():
+
     await bot.wait_until_ready()
+
 
     guild = discord.Object(id=TEST_GUILD_ID)
     synced = await bot.tree.sync(guild=guild)
@@ -115,7 +60,6 @@ async def list_members(ctx: commands.Context):
 
     first_20_names = [m.display_name for m in members[:20]]
     names_text = ", ".join(first_20_names) if first_20_names else "No members found."
-
     await ctx.send(f"Total members: {total}\nFirst 20: {names_text}")
 @bot.tree.command(
     name="bonding-checkin",
@@ -129,11 +73,143 @@ async def hi_slash(interaction: discord.Interaction):
     names = [m.display_name for m in members[:25]]
     print(names)
 
+    await interaction.response.defer(ephemeral=True)
 
-    await interaction.response.send_message("Who did you meet this week?", view=ModalButtonView(names), ephemeral=False)
+    for member in members:
+        print("Trying to DM:", member, member.id)
+        try:
+            await member.send(
+                "Hi! This is the weekly class goal check in.",
+                view=ModalButtonView(
+                    [m.display_name for m in members],
+                    DATABASE_URL,
+                ),
+            )
+            print("DM sent to:", member)
+        except discord.Forbidden:
+            print("Cannot DM (Forbidden):", member)
+        except Exception as e:
+            print("Error DMing", member, ":", repr(e))
+
+    await interaction.followup.send("Finished trying to DM members.", ephemeral=True)
 @hi_slash.error
 async def hi_slash_error(interaction, error):
     if isinstance(error, app_commands.MissingRole):
         await interaction.response.send_message("You need the Exco role.", ephemeral=True)
-bot.run(TOKEN)
 
+@bot.tree.command(
+    name="bonding-checkresponses",
+    description="Only Exco can use this",
+    guild=discord.Object(id=TEST_GUILD_ID),
+)
+@app_commands.checks.has_role("EXCO")
+async def check_responses(interaction: discord.Interaction):
+    guild = interaction.guild
+    members = guild.members
+    names = [m.display_name for m in members[:25]]
+    print(names)
+
+    await interaction.response.defer(ephemeral=True)
+
+    if not DATABASE_URL:
+        await interaction.followup.send(
+            "DATABASE_URL is not set. Please configure it before checking responses.",
+            ephemeral=True,
+        )
+        return
+    try:
+        rows = await fetch_connection_rows(DATABASE_URL)
+    except Exception as exc:
+        await interaction.followup.send(
+            f"Failed to fetch responses: {exc}",
+            ephemeral=True,
+        )
+        return
+    if not rows:
+        await interaction.followup.send("No responses yet.", ephemeral=True)
+        return
+    lines = ""
+    for username, met_name, details, date_added in rows:
+        details_text = f" - {details}" if details else ""
+        lines+= f"{date_added:%Y-%m-%d %H:%M} | {username} met {met_name}{details_text} \n"
+
+    await interaction.followup.send(
+        f"Total responses: {len(rows)}",
+        ephemeral=True,
+    )
+    await interaction.followup.send(lines, ephemeral=True)
+@check_responses.error
+async def check_responses_error(interaction, error):
+    if isinstance(error, app_commands.MissingRole):
+        await interaction.response.send_message("You need the Exco role.", ephemeral=True)
+
+
+@bot.tree.command(
+    name="bonding-missing",
+    description="Show members missing this week's submissions",
+    guild=discord.Object(id=TEST_GUILD_ID),
+)
+@app_commands.checks.has_role("EXCO")
+async def bonding_missing(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    if not DATABASE_URL:
+        await interaction.followup.send(
+            "DATABASE_URL is not set. Please configure it before checking missing submissions.",
+            ephemeral=True,
+        )
+        return
+
+    sgt = ZoneInfo("Asia/Singapore")
+    now_sgt = datetime.now(sgt)
+    week_start_sgt = datetime(
+        now_sgt.year,
+        now_sgt.month,
+        now_sgt.day,
+        tzinfo=sgt,
+    ) - timedelta(days=now_sgt.weekday())
+    week_start_utc = week_start_sgt.astimezone(timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+
+    try:
+        submitted_usernames = await fetch_distinct_usernames_between(
+            DATABASE_URL,
+            week_start_utc,
+            now_utc,
+        )
+    except Exception as exc:
+        await interaction.followup.send(
+            f"Failed to fetch submissions: {exc}",
+            ephemeral=True,
+        )
+        return
+
+    guild = interaction.guild
+    members = guild.members
+    missing_members = [
+        member for member in members
+        if member.name not in submitted_usernames
+    ]
+
+    if not missing_members:
+        await interaction.followup.send(
+            "Everyone has submitted at least once this week.",
+            ephemeral=True,
+        )
+        return
+
+    names = sorted(member.display_name for member in missing_members)
+    lines = "\n".join(f"- {name}" for name in names)
+
+    await interaction.followup.send(
+        f"Missing this week (SGT): {len(names)}",
+        ephemeral=True,
+    )
+    await interaction.followup.send(lines, ephemeral=True)
+
+
+@bonding_missing.error
+async def bonding_missing_error(interaction, error):
+    if isinstance(error, app_commands.MissingRole):
+        await interaction.response.send_message("You need the Exco role.", ephemeral=True)
+bot.run(TOKEN)
