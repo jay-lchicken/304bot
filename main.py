@@ -5,8 +5,11 @@ from zoneinfo import ZoneInfo
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
-from db import fetch_connection_rows, fetch_distinct_usernames_between
-from views import ModalButtonView
+from db import (
+    fetch_connection_rows,
+    fetch_distinct_usernames_between,
+    insert_connection_row,
+)
 load_dotenv()
 TOKEN = os.getenv('TOKEN')
 TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
@@ -63,39 +66,46 @@ async def list_members(ctx: commands.Context):
     await ctx.send(f"Total members: {total}\nFirst 20: {names_text}")
 @bot.tree.command(
     name="bonding-checkin",
-    description="Only Exco can use this",
+    description="Submit who you met this week",
     guild=discord.Object(id=TEST_GUILD_ID),
 )
-@app_commands.checks.has_role("EXCO")
-async def hi_slash(interaction: discord.Interaction):
-    guild = interaction.guild
-    members = guild.members
-    names = [m.display_name for m in members[:25]]
-    print(names)
-
+@app_commands.describe(
+    met_name="Name of the person you met",
+    details="Optional details about the meeting",
+)
+async def bonding_checkin(
+    interaction: discord.Interaction,
+    met_name: str,
+    details: str | None = None,
+):
     await interaction.response.defer(ephemeral=True)
 
-    for member in members:
-        print("Trying to DM:", member, member.id)
-        try:
-            await member.send(
-                "Hi! This is the weekly class goal check in.",
-                view=ModalButtonView(
-                    [m.display_name for m in members],
-                    DATABASE_URL,
-                ),
-            )
-            print("DM sent to:", member)
-        except discord.Forbidden:
-            print("Cannot DM (Forbidden):", member)
-        except Exception as e:
-            print("Error DMing", member, ":", repr(e))
+    if not DATABASE_URL:
+        await interaction.followup.send(
+            "DATABASE_URL is not set. Please configure it before submitting.",
+            ephemeral=True,
+        )
+        return
 
-    await interaction.followup.send("Finished trying to DM members.", ephemeral=True)
-@hi_slash.error
-async def hi_slash_error(interaction, error):
-    if isinstance(error, app_commands.MissingRole):
-        await interaction.response.send_message("You need the Exco role.", ephemeral=True)
+    cleaned_details = details.strip() if details else None
+    try:
+        await insert_connection_row(
+            DATABASE_URL,
+            interaction.user.name,
+            met_name,
+            cleaned_details,
+        )
+    except Exception as exc:
+        await interaction.followup.send(
+            f"Failed to save your response: {exc}",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.followup.send(
+        f"Recorded: you met {met_name}.",
+        ephemeral=True,
+    )
 
 @bot.tree.command(
     name="bonding-checkresponses",
