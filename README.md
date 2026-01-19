@@ -62,7 +62,6 @@ docker run --env-file .env 304bot
 Create a `docker-compose.yml` file:
 
 ```yaml
-version: '3.8'
 services:
   bot:
     build: .
@@ -74,7 +73,7 @@ services:
 Run with:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ## Configuration
