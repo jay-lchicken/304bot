@@ -78,7 +78,7 @@ docker compose up -d
 
 ## Configuration
 
-- `TEST_GUILD_ID`: Currently hardcoded in `main.py` (line 11). To use this bot in your server, update this value to your Discord server (guild) ID.
+- `TEST_GUILD_ID`: Currently hardcoded in `main.py`. To use this bot in your server, update this value to your Discord server (guild) ID.
 - `TOKEN`: Discord bot token, passed via environment variable (required)
 
 ## License
