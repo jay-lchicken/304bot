@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
+import requests
 from db import (
     fetch_connection_rows,
     fetch_distinct_usernames_between,
@@ -222,4 +223,42 @@ async def bonding_missing(interaction: discord.Interaction):
 async def bonding_missing_error(interaction, error):
     if isinstance(error, app_commands.MissingRole):
         await interaction.response.send_message("You need the Exco role.", ephemeral=True)
+
+
+@bot.tree.command(
+    name="shorten_url",
+    description="Shorten your URL",
+    guild=discord.Object(id=TEST_GUILD_ID),
+)
+@app_commands.checks.has_role("EXCO")
+async def shorten_url(interaction: discord.Interaction, long_url: str, tag: str):
+
+
+    await interaction.response.defer(ephemeral=True)
+    JWT_TOKEN = os.getenv("JWT_TOKEN")
+    headers = {
+        "Authorization": f"Bearer {JWT_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    url = "https://linxy.techtime.coffee/api/links"
+    data = {
+        "link": long_url,
+        "tag": tag,
+        "description": f"Shortened by: {interaction.user.name} on Discord",
+        "baseUrl": "link.s304.xyz"
+    }
+    try:
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        result = response.json()
+        await interaction.followup.send(f"Shortened URL: {result.get('short_url', 'URL shortened')}. URL is https://link.s304.xyz/{tag}", ephemeral=True)
+    except requests.exceptions.HTTPError as exc:
+        await interaction.followup.send(f"API error ({exc.response.status_code}): {exc.response.text}", ephemeral=True)
+    except requests.exceptions.RequestException as exc:
+        await interaction.followup.send(f"Failed to shorten URL: {exc}", ephemeral=True)
+    except Exception as exc:
+        await interaction.followup.send(f"Unexpected error: {exc}", ephemeral=True)
+
+
+
 bot.run(TOKEN)
