@@ -15,6 +15,7 @@ load_dotenv()
 TOKEN = os.getenv('TOKEN')
 TEST_GUILD_ID = os.getenv('TEST_GUILD_ID')
 DATABASE_URL = os.getenv("DATABASE_URL")
+FORUM_CHANNEL_ID = int(os.getenv("FORUM_CHANNEL_ID"))
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
@@ -157,7 +158,7 @@ async def check_responses_error(interaction, error):
 
 @bot.tree.command(
     name="bonding-missing",
-    description="Show members missing this week's submissions",
+    description="Show members missing this week's submissions (Only EXCOs can use this)",
     guild=discord.Object(id=TEST_GUILD_ID),
 )
 @app_commands.checks.has_role("EXCO")
@@ -259,6 +260,70 @@ async def shorten_url(interaction: discord.Interaction, long_url: str, tag: str)
     except Exception as exc:
         await interaction.followup.send(f"Unexpected error: {exc}", ephemeral=True)
 
+@bot.event
+async def on_thread_create(thread: discord.Thread):
+    print("HIII")
+    parent = thread.parent
+    if not isinstance(parent, discord.ForumChannel):
+        return
+    print("THREAD CREATED")
+    print(parent.id)
+    print(FORUM_CHANNEL_ID)
+    if parent.id == FORUM_CHANNEL_ID:
+        try:
+            await thread.join()
+            print("Joined thread")
+        except Exception as e:
+            print("Failed to join thread:", e)
+
+        try:
+            msg = await thread.send(
+                "Hello! We noticed you just created a post. Please wait patiently while some people respond!"
+            )
+            print("Sent message")
+            await thread.starter_message.add_reaction("👀")
+            print("Added reaction")
+        except Exception as e:
+            print("Error sending or reacting:", e)
+
+
+@bot.tree.command(
+    name="mark-completed",
+    description="Mark a thread as completed (changes reaction from eyes to tick)",
+    guild=discord.Object(id=TEST_GUILD_ID),
+)
+async def mark_completed(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)
+
+    if not isinstance(interaction.channel, discord.Thread):
+        await interaction.followup.send(
+            "This command can only be used in a thread.",
+            ephemeral=True,
+        )
+        return
+
+    thread = interaction.channel
+    try:
+        starter_message = await thread.fetch_message(thread.id)
+
+        await starter_message.remove_reaction("👀", bot.user)
+
+        await starter_message.add_reaction("✅")
+
+        await interaction.followup.send(
+            "Thread marked as completed!",
+            ephemeral=True,
+        )
+    except discord.NotFound:
+        await interaction.followup.send(
+            "Could not find the starter message.",
+            ephemeral=True,
+        )
+    except Exception as e:
+        await interaction.followup.send(
+            f"Error marking as completed: {e}",
+            ephemeral=True,
+        )
 
 
 bot.run(TOKEN)
